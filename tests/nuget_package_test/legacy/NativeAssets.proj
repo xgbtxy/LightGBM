@@ -1,0 +1,15 @@
+<Project DefaultTargets="CheckNativeAssets" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworkIdentifier>.NETFramework</TargetFrameworkIdentifier>
+  </PropertyGroup>
+  <Import Project="$(LightGBMPackageDirectory)/build/LightGBM.props" />
+  <Import Project="$(LightGBMPackageDirectory)/build/LightGBM.targets" />
+  <Target Name="_CheckForInvalidConfigurationAndPlatform" />
+  <Target Name="CheckNativeAssets" DependsOnTargets="_CheckForInvalidConfigurationAndPlatform">
+    <Error Condition="'@(Content->Count())' != '2'" Text="Expected a native library and CLI for $(PlatformTarget)." />
+    <Copy SourceFiles="@(Content)" DestinationFolder="$(OutputPath)" />
+    <Error Condition="!Exists('$(OutputPath)/lib_lightgbm.dll')" Text="Native library was not copied." />
+    <Error Condition="!Exists('$(OutputPath)/lightgbm.exe')" Text="Native CLI was not copied." />
+  </Target>
+</Project>

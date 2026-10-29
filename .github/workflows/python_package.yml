@@ -25,9 +25,13 @@ env:
 
 jobs:
   test-linux-aarch64:
-    name: bdist wheel (aarch64-manylinux2014, gcc, Python 3.12)
+    name: ${{ matrix.task }} (aarch64-manylinux2014, gcc, Python 3.12)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        task: [bdist, regular]
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -62,7 +66,7 @@ jobs:
             --env OS_NAME=linux \
             --env PRODUCES_ARTIFACTS=true \
             --env PYTHON_VERSION="3.12" \
-            --env TASK=bdist \
+            --env TASK=${{ matrix.task }} \
             -v "${PWD}":"${{ env.BUILD_DIRECTORY }}" \
             -w ${{ env.BUILD_DIRECTORY }} \
             "${IMAGE_URI}" \
@@ -70,8 +74,10 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: linux-aarch64-wheel
-          path: artifacts/*.whl
+          name: linux-aarch64-${{ matrix.task == 'bdist' && 'wheel' || 'liblightgbm' }}
+          path: |
+            artifacts/*.whl
+            artifacts/*.so
           if-no-files-found: error
   test:
     # yamllint disable-line rule:line-length
@@ -198,6 +204,12 @@ jobs:
             produces-artifacts: 'true'
             artifact-name: 'macosx-amd64-liblightgbm'
             python_version: '3.12'
+          - os: macos-15
+            task: regular
+            compiler: clang
+            produces-artifacts: 'true'
+            artifact-name: 'macosx-arm64-liblightgbm'
+            python_version: '3.12'
           - os: ubuntu-latest
             container: *manylinux_amd64_image
             os-display-name: *manylinux_amd64_display_name
@@ -254,6 +266,13 @@ jobs:
             produces-artifacts: 'true'
             artifact-name: 'windows-amd64-cli-and-liblightgbm'
             python_version: '3.12'
+          - os: windows-11-arm
+            task: nuget-native
+            compiler: MSVC
+            produces-artifacts: 'true'
+            artifact-name: 'windows-arm64-cli-and-liblightgbm'
+            setup-conda: 'false'
+            python_version: '3.12'
           - os: ubuntu-24.04-ppc64le-p10
             container: 'ghcr.io/lightgbm-org/lightgbm-ci:ppc64le-manylinux-2_28'
             os-display-name: 'ppc64le-manylinux_2_28'
@@ -295,7 +314,7 @@ jobs:
           persist-credentials: false
           submodules: true
       - name: Set up Python on Windows
-        if: startsWith(matrix.os, 'windows') && matrix.setup-conda == 'false'
+        if: startsWith(matrix.os, 'windows') && matrix.setup-conda == 'false' && matrix.task != 'nuget-native'
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: ${{ matrix.python_version }}
@@ -377,6 +396,7 @@ jobs:
     timeout-minutes: 30
     needs:
       - test
+      - test-linux-aarch64
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
@@ -387,9 +407,9 @@ jobs:
       - name: Download lib_lightgbm (all operating systems) and Windows CLI
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
-          merge-multiple: true
+          merge-multiple: false
           path: ${{ env.BUILD_ARTIFACTSTAGINGDIRECTORY }}
-          pattern: '*amd64*-liblightgbm'
+          pattern: '*-liblightgbm'
           run-id: ${{ github.run_id }}
       - name: Setup NuGet CLI
         uses: NuGet/setup-nuget@fd55a6f3b34392fa83fde1454582407d8c714123  # v4.0
@@ -413,6 +433,83 @@ jobs:
           name: nuget-package
           path: artifacts/*.nupkg
           if-no-files-found: error
+
+  test-nuget:
+    name: NuGet native smoke (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    needs:
+      - create-nuget
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            rid: linux-x64
+            architecture: x64
+          - os: ubuntu-24.04-arm
+            rid: linux-arm64
+            architecture: ARM64
+          - os: macos-15-intel
+            rid: osx-x64
+            architecture: x64
+          - os: macos-15
+            rid: osx-arm64
+            architecture: ARM64
+          - os: windows-2022
+            rid: win-x64
+            architecture: x64
+          - os: windows-11-arm
+            rid: win-arm64
+            architecture: ARM64
+    env:
+      LIGHTGBM_NUGET_SOURCE: '${{ github.workspace }}/artifacts/nuget'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Download NuGet package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: nuget-package
+          path: ${{ env.LIGHTGBM_NUGET_SOURCE }}
+      - name: Setup .NET
+        uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1  # v5
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install macOS OpenMP runtime
+        if: runner.os == 'macOS'
+        run: brew install libomp
+      - name: Restore, publish, and run against the packaged native library
+        shell: bash
+        run: |
+          package_version=$(tr -d '\r\n' < VERSION.txt | sed 's/rc/-rc/')
+          dotnet restore tests/nuget_package_test/LightGbm.NativeSmoke.csproj \
+            --runtime '${{ matrix.rid }}' \
+            --configfile tests/nuget_package_test/NuGet.Config \
+            --packages "${RUNNER_TEMP}/nuget-cache" \
+            -p:LightGBMPackageVersion="${package_version}"
+          dotnet publish tests/nuget_package_test/LightGbm.NativeSmoke.csproj \
+            --configuration Release --runtime '${{ matrix.rid }}' \
+            --self-contained false --no-restore \
+            -p:LightGBMPackageVersion="${package_version}" \
+            --output "${RUNNER_TEMP}/lightgbm-smoke"
+          arguments=()
+          if [[ '${{ matrix.architecture }}' == 'ARM64' ]]; then
+            arguments+=(--expect-arm64)
+          fi
+          dotnet "${RUNNER_TEMP}/lightgbm-smoke/LightGbm.NativeSmoke.dll" "${arguments[@]}"
+      - name: Check legacy Windows package targets
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          package_version=$(tr -d '\r\n' < VERSION.txt | sed 's/rc/-rc/')
+          dotnet msbuild tests/nuget_package_test/legacy/NativeAssets.proj \
+            -p:LightGBMPackageDirectory="${RUNNER_TEMP}/nuget-cache/lightgbm/${package_version}" \
+            -p:PlatformTarget='${{ matrix.architecture }}' \
+            -p:OutputPath="${RUNNER_TEMP}/legacy-smoke"
 
   test-latest-versions:
     name: Python - latest versions (manylinux_2_28)

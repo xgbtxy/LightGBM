@@ -98,6 +98,29 @@ It is very useful to build `C++ unit tests <#build-c-unit-tests>`__ with sanitiz
     :local:
     :backlinks: none
 
+NuGet Package
+~~~~~~~~~~~~~
+
+The `LightGBM NuGet package <https://www.nuget.org/packages/LightGBM>`__ supplies the native libraries used by .NET bindings such as ML.NET.
+It includes native assets for ``linux-x64``, ``linux-arm64``, ``osx-x64``, ``osx-arm64``, ``win-x64``, and ``win-arm64``.
+
+For projects using ``PackageReference``, NuGet selects the native library for the application's runtime identifier.
+For example, publish a Linux ARM64 application with:
+
+.. code:: sh
+
+   dotnet publish --runtime linux-arm64 --self-contained false
+
+Windows projects using ``packages.config`` must set ``PlatformTarget`` to ``x64`` or ``ARM64`` so that the matching native library and CLI are copied to the output directory.
+
+The native libraries also require the corresponding platform runtime dependencies:
+
+* Linux: a compatible C++ standard library and GNU OpenMP runtime (for example, ``libstdc++6`` and ``libgomp1`` on Debian or Ubuntu).
+* macOS: the OpenMP runtime, which can be installed with ``brew install libomp`` using Homebrew for the application's architecture.
+* Windows: the Microsoft Visual C++ Redistributable for the application's architecture.
+
+The application process, selected native library, and these dependencies must all use the same architecture.
+
 Windows
 ~~~~~~~
 

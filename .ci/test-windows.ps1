@@ -19,6 +19,20 @@ Remove-Item $env:TMPDIR -Force -Recurse -ErrorAction Ignore
 # create the artifact upload directory if it doesn't exist yet
 [Void][System.IO.Directory]::CreateDirectory($env:BUILD_ARTIFACTSTAGINGDIRECTORY)
 
+if ($env:TASK -eq "nuget-native") {
+    $targetArchitecture = [System.Runtime.InteropServices.Architecture]::Arm64
+    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -ne $targetArchitecture) {
+        Write-Output "The nuget-native task requires an ARM64 Windows runner."
+        Assert-Output $False
+    }
+    Set-Location "$env:BUILD_SOURCESDIRECTORY"
+    cmake -B build -S . -A ARM64 ; Assert-Output $?
+    cmake --build build --target ALL_BUILD --config Release ; Assert-Output $?
+    cp ./Release/lib_lightgbm.dll "$env:BUILD_ARTIFACTSTAGINGDIRECTORY"
+    cp ./Release/lightgbm.exe "$env:BUILD_ARTIFACTSTAGINGDIRECTORY"
+    exit 0
+}
+
 if ($env:TASK -eq "r-package") {
     & .\.ci\test-r-package-windows.ps1 ; Assert-Output $?
     exit 0
@@ -132,7 +146,11 @@ if (-not $UseConda) {
 
 Set-Location "$env:BUILD_SOURCESDIRECTORY"
 if ($env:TASK -eq "regular") {
-    cmake -B build -S . -A x64 ; Assert-Output $?
+    $cmakeArchitecture = "x64"
+    if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+        $cmakeArchitecture = "ARM64"
+    }
+    cmake -B build -S . -A $cmakeArchitecture ; Assert-Output $?
     cmake --build build --target ALL_BUILD --config Release ; Assert-Output $?
     sh ./build-python.sh install --precompile --no-isolation ; Assert-Output $?
     cp ./Release/lib_lightgbm.dll "$env:BUILD_ARTIFACTSTAGINGDIRECTORY"
