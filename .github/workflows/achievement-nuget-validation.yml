@@ -1,0 +1,346 @@
+name: NuGet six-platform validation
+'on':
+  push:
+    branches:
+    - validation/nuget-arm64-7508
+permissions:
+  contents: read
+env:
+  BUILD_ARTIFACTSTAGINGDIRECTORY: ${{ github.workspace }}/artifacts
+  BUILD_SOURCESDIRECTORY: ${{ github.workspace }}
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+  DEBIAN_FRONTEND: noninteractive
+  NVIDIA_VISIBLE_DEVICES: all
+  SKBUILD_STRICT_CONFIG: true
+jobs:
+  test-linux-aarch64:
+    name: ${{ matrix.task }} (aarch64-manylinux2014, gcc, Python 3.12)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        task:
+        - regular
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 5
+        persist-credentials: false
+        submodules: true
+        ref: 806f1360b42aef1d48da297003017f766b92de81
+    - name: Verify tested source
+      shell: bash
+      run: 'test "$(git rev-parse HEAD)" = "806f1360b42aef1d48da297003017f766b92de81"
+
+        git rev-parse HEAD
+
+        '
+    - name: Setup and run tests
+      shell: bash
+      env:
+        BUILD_DIRECTORY: /LightGBM
+      run: "cat > ./docker-script.sh <<EOF\nmkdir -p \\$BUILD_ARTIFACTSTAGINGDIRECTORY\nexport CONDA=\\$HOME/miniforge\nexport\
+        \ PATH=\\$CONDA/bin:\\$PATH\n${{ env.BUILD_DIRECTORY }}/.ci/setup.sh || exit 1\n${{ env.BUILD_DIRECTORY }}/.ci/test.sh\
+        \ || exit 1\nEOF\nIMAGE_URI=\"lightgbm/vsts-agent:manylinux2014_aarch64\"\ndocker pull \"${IMAGE_URI}\" || exit 1\n\
+        docker run \\\n  --platform \"${PLATFORM}\" \\\n  --rm \\\n  --env BUILD_DIRECTORY=${{ env.BUILD_DIRECTORY }} \\\n\
+        \  --env BUILD_ARTIFACTSTAGINGDIRECTORY=${{ env.BUILD_DIRECTORY }}/artifacts/ \\\n  --env COMPILER=gcc \\\n  --env\
+        \ METHOD=wheel \\\n  --env OS_NAME=linux \\\n  --env PRODUCES_ARTIFACTS=true \\\n  --env PYTHON_VERSION=\"3.12\" \\\
+        \n  --env TASK=${{ matrix.task }} \\\n  -v \"${PWD}\":\"${{ env.BUILD_DIRECTORY }}\" \\\n  -w ${{ env.BUILD_DIRECTORY\
+        \ }} \\\n  \"${IMAGE_URI}\" \\\n  /bin/bash ./docker-script.sh\n"
+    - name: Upload artifacts
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: linux-aarch64-${{ matrix.task == 'bdist' && 'wheel' || 'liblightgbm' }}
+        path: 'artifacts/*.whl
+
+          artifacts/*.so
+
+          '
+        if-no-files-found: error
+  test:
+    name: ${{ matrix.task }} ${{ matrix.method }} (${{ matrix.os-display-name || matrix.os }}, ${{ matrix.compiler }}, Python
+      ${{ matrix.python_version }})
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: macos-15-intel
+          task: regular
+          compiler: clang
+          produces-artifacts: 'true'
+          artifact-name: macosx-amd64-liblightgbm
+          python_version: '3.12'
+        - os: macos-15
+          task: regular
+          compiler: clang
+          produces-artifacts: 'true'
+          artifact-name: macosx-arm64-liblightgbm
+          python_version: '3.12'
+        - os: ubuntu-latest
+          container: ghcr.io/lightgbm-org/lightgbm-vsts-agent:manylinux_2_28_x86_64
+          os-display-name: x86_64_manylinux_2_28
+          task: regular
+          compiler: gcc
+          python_version: '3.12'
+          in-ubuntu-base-container: 'false'
+          setup-conda: 'false'
+          produces-artifacts: 'true'
+          artifact-name: linux-amd64-liblightgbm
+        - os: windows-2022
+          task: regular
+          compiler: MSVC
+          produces-artifacts: 'true'
+          artifact-name: windows-amd64-cli-and-liblightgbm
+          python_version: '3.12'
+        - os: windows-11-arm
+          task: nuget-native
+          compiler: MSVC
+          produces-artifacts: 'true'
+          artifact-name: windows-arm64-cli-and-liblightgbm
+          setup-conda: 'false'
+          python_version: '3.12'
+    steps:
+    - name: Install packages used by third-party actions
+      if: ${{ matrix.in-ubuntu-base-container == 'true' }}
+      shell: bash
+      run: "apt-get update -y\napt-get install --no-install-recommends -y \\\n  ca-certificates \\\n  dirmngr \\\n  gpg \\\
+        \n  gpg-agent \\\n  software-properties-common \\\n  sudo\n# install newest version of git\n# ref:\n#     - https://unix.stackexchange.com/a/170831/550004\n\
+        #     - https://git-scm.com/download/linux\nadd-apt-repository ppa:git-core/ppa -y\napt-get update -y\napt-get install\
+        \ --no-install-recommends -y \\\n  git\n"
+    - name: Trust git cloning LightGBM
+      if: startsWith(matrix.os, 'ubuntu')
+      run: 'git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+        '
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 5
+        persist-credentials: false
+        submodules: true
+        ref: 806f1360b42aef1d48da297003017f766b92de81
+    - name: Verify tested source
+      shell: bash
+      run: 'test "$(git rev-parse HEAD)" = "806f1360b42aef1d48da297003017f766b92de81"
+
+        git rev-parse HEAD
+
+        '
+    - name: Set up Python on Windows
+      if: startsWith(matrix.os, 'windows') && matrix.setup-conda == 'false' && matrix.task != 'nuget-native'
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: ${{ matrix.python_version }}
+    - name: Set up 'pixi' for jobs that need it
+      if: matrix.pixi-env != ''
+      uses: prefix-dev/setup-pixi@d3f436a425481402e6a95a1d1fc10331c708cd9e
+      with:
+        environments: ${{ matrix.pixi-env }}
+    - name: Setup and run tests on Linux and macOS
+      if: startsWith(matrix.os, 'macos') || startsWith(matrix.os, 'ubuntu') || endsWith(matrix.os, 'gpu-amd64')
+      shell: bash
+      run: "export COMPILER=\"${{ matrix.compiler }}\"\nexport IN_UBUNTU_BASE_CONTAINER=\"${{ matrix.in-ubuntu-base-container\
+        \ }}\"\nexport SETUP_CONDA=\"${{ matrix.setup-conda }}\"\nexport TASK=\"${{ matrix.task }}\"\nexport METHOD=\"${{\
+        \ matrix.method }}\"\nif [[ \"${{ matrix.os }}\" =~ ^macos ]]; then\n    export OS_NAME=\"macos\"\nelif \\\n  [[ \"\
+        ${{ matrix.os }}\" == \"ubuntu-latest\" ]] \\\n  || [[ \"${{ matrix.os }}\" == \"github-hosted-linux-gpu-amd64\" ]]\
+        \ \\\n  || [[ \"${{ matrix.os }}\" == \"ubuntu-24.04-ppc64le-p10\" ]];\nthen\n    export OS_NAME=\"linux\"\n    export\
+        \ PATH=\"/usr/lib64/openmpi/bin:${PATH}\"\nfi\nexport PYTHON_VERSION=\"${{ matrix.python_version }}\"\nexport BUILD_DIRECTORY=\"\
+        $GITHUB_WORKSPACE\"\n# some pre-built images already have 'CONDA' set\nif [[ -z \"${CONDA:-}\" ]]; then\n  export\
+        \ CONDA=${HOME}/miniforge\nfi\nexport PATH=${CONDA}/bin:${PATH}\nexport PRODUCES_ARTIFACTS=\"${{ matrix.produces-artifacts\
+        \ }}\"\n$GITHUB_WORKSPACE/.ci/setup.sh || exit 1\n$GITHUB_WORKSPACE/.ci/test.sh || exit 1\n"
+    - name: Install OpenCL on Windows
+      if: startsWith(matrix.os, 'windows') && (matrix.task == 'bdist') && matrix.setup-conda != 'false'
+      shell: pwsh -command ". {0}"
+      run: '& "$env:GITHUB_WORKSPACE/.ci/install-opencl.ps1"
+
+        '
+    - name: Initialize conda on Windows
+      if: startsWith(matrix.os, 'windows') && matrix.setup-conda != 'false'
+      shell: pwsh -command ". {0}"
+      run: '$env:PATH = "$env:CONDA/Scripts;$env:PATH"
+
+        conda init powershell
+
+        '
+    - name: Setup and run tests on Windows
+      if: startsWith(matrix.os, 'windows')
+      shell: pwsh -command ". {0}"
+      run: '$candidateTemp = [System.IO.Path]::GetFullPath((Join-Path $env:USERPROFILE ''tmp''))
+
+        if ((Split-Path $candidateTemp -Parent) -ne $env:USERPROFILE) { throw ''Unexpected temporary directory'' }
+
+        $env:COMPILER = "${{ matrix.compiler }}"
+
+        $env:METHOD = "${{ matrix.method }}"
+
+        $env:PRODUCES_ARTIFACTS = "${{ matrix.produces-artifacts }}"
+
+        $env:PYTHON_VERSION = "${{ matrix.python_version }}"
+
+        $env:SETUP_CONDA = "${{ matrix.setup-conda }}"
+
+        $env:TASK = "${{ matrix.task }}"
+
+        $env:WHEEL_PLATFORM_TAG = "${{ matrix.wheel-platform-tag }}"
+
+        & "$env:GITHUB_WORKSPACE/.ci/test-windows.ps1"
+
+        '
+    - name: Upload artifacts
+      if: ${{ matrix.produces-artifacts == 'true' }}
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: ${{ matrix.artifact-name }}
+        path: 'artifacts/*.dll
+
+          artifacts/*.dylib
+
+          artifacts/*.exe
+
+          artifacts/*.so
+
+          artifacts/*.tar.gz
+
+          artifacts/*.whl
+
+          '
+        if-no-files-found: error
+  create-nuget:
+    name: NuGet package
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs:
+    - test
+    - test-linux-aarch64
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        fetch-depth: 5
+        persist-credentials: false
+        submodules: false
+        ref: 806f1360b42aef1d48da297003017f766b92de81
+    - name: Verify tested source
+      shell: bash
+      run: 'test "$(git rev-parse HEAD)" = "806f1360b42aef1d48da297003017f766b92de81"
+
+        git rev-parse HEAD
+
+        '
+    - name: Download lib_lightgbm (all operating systems) and Windows CLI
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        merge-multiple: false
+        path: ${{ env.BUILD_ARTIFACTSTAGINGDIRECTORY }}
+        pattern: '*-liblightgbm'
+        run-id: ${{ github.run_id }}
+    - name: Setup NuGet CLI
+      uses: NuGet/setup-nuget@fd55a6f3b34392fa83fde1454582407d8c714123
+    - name: Setup mono
+      run: "sudo apt-get update -y\nsudo apt-get install --no-install-recommends -y \\\n  mono-devel\n"
+    - name: Create NuGet package
+      run: "python .ci/create-nuget.py \"${BUILD_ARTIFACTSTAGINGDIRECTORY}\"\nnuget pack \\\n  $(pwd)/.ci/nuget/LightGBM.nuspec\
+        \ \\\n  -NonInteractive \\\n  -Verbosity detailed \\\n  -OutputDirectory \"${BUILD_ARTIFACTSTAGINGDIRECTORY}\"\n"
+    - name: Upload artifacts
+      uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: nuget-package
+        path: artifacts/*.nupkg
+        if-no-files-found: error
+  test-nuget:
+    name: NuGet native smoke (${{ matrix.rid }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    needs:
+    - create-nuget
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-latest
+          rid: linux-x64
+          architecture: x64
+        - os: ubuntu-24.04-arm
+          rid: linux-arm64
+          architecture: ARM64
+        - os: macos-15-intel
+          rid: osx-x64
+          architecture: x64
+        - os: macos-15
+          rid: osx-arm64
+          architecture: ARM64
+        - os: windows-2022
+          rid: win-x64
+          architecture: x64
+        - os: windows-11-arm
+          rid: win-arm64
+          architecture: ARM64
+    env:
+      LIGHTGBM_NUGET_SOURCE: ${{ github.workspace }}/artifacts/nuget
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+        submodules: false
+        ref: 806f1360b42aef1d48da297003017f766b92de81
+    - name: Verify tested source
+      shell: bash
+      run: 'test "$(git rev-parse HEAD)" = "806f1360b42aef1d48da297003017f766b92de81"
+
+        git rev-parse HEAD
+
+        '
+    - name: Download NuGet package
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      with:
+        name: nuget-package
+        path: ${{ env.LIGHTGBM_NUGET_SOURCE }}
+    - name: Setup .NET
+      uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1
+      with:
+        dotnet-version: 8.0.x
+    - name: Install macOS OpenMP runtime
+      if: runner.os == 'macOS'
+      run: brew install libomp
+    - name: Restore, publish, and run against the packaged native library
+      shell: bash
+      run: "package_version=$(tr -d '\\r\\n' < VERSION.txt | sed 's/rc/-rc/')\ndotnet restore tests/nuget_package_test/LightGbm.NativeSmoke.csproj\
+        \ \\\n  --runtime '${{ matrix.rid }}' \\\n  --configfile tests/nuget_package_test/NuGet.Config \\\n  --packages \"\
+        ${RUNNER_TEMP}/nuget-cache\" \\\n  -p:LightGBMPackageVersion=\"${package_version}\"\ndotnet publish tests/nuget_package_test/LightGbm.NativeSmoke.csproj\
+        \ \\\n  --configuration Release --runtime '${{ matrix.rid }}' \\\n  --self-contained false --no-restore \\\n  -p:LightGBMPackageVersion=\"\
+        ${package_version}\" \\\n  --output \"${RUNNER_TEMP}/lightgbm-smoke\"\narguments=()\nif [[ '${{ matrix.architecture\
+        \ }}' == 'ARM64' ]]; then\n  arguments+=(--expect-arm64)\nfi\ndotnet \"${RUNNER_TEMP}/lightgbm-smoke/LightGbm.NativeSmoke.dll\"\
+        \ \"${arguments[@]}\"\n"
+    - name: Check legacy Windows package targets
+      if: runner.os == 'Windows'
+      shell: bash
+      run: "package_version=$(tr -d '\\r\\n' < VERSION.txt | sed 's/rc/-rc/')\ndotnet msbuild tests/nuget_package_test/legacy/NativeAssets.proj\
+        \ \\\n  -p:LightGBMPackageDirectory=\"${RUNNER_TEMP}/nuget-cache/lightgbm/${package_version}\" \\\n  -p:PlatformTarget='${{\
+        \ matrix.architecture }}' \\\n  -p:OutputPath=\"${RUNNER_TEMP}/legacy-smoke\"\n"
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: 806f1360b42aef1d48da297003017f766b92de81
+        persist-credentials: false
+    - name: Verify tested source
+      run: test "$(git rev-parse HEAD)" = "806f1360b42aef1d48da297003017f766b92de81"
+    - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Install pre-commit
+      run: python -m pip install pre-commit==4.2.0
+    - name: Run project-pinned hooks
+      run: 'pre-commit run --files .ci/create-nuget.py .ci/test-windows.ps1 .github/workflows/python_package.yml docs/Installation-Guide.rst
+        tests/nuget_package_test/LightGbm.NativeSmoke.csproj tests/nuget_package_test/NuGet.Config tests/nuget_package_test/Program.cs
+        tests/nuget_package_test/legacy/NativeAssets.proj tests/nuget_package_test/legacy/packages.config
+
+        git diff --exit-code'
