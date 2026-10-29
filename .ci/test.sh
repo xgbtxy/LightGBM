@@ -347,6 +347,12 @@ matplotlib.use\(\"Agg\"\)\
             'h5py>=3.10' \
             'ipywidgets>=8.1.2' \
             'notebook>=7.1.2'
+        if [[ "${OS_NAME}" == "linux" && "${ARCH}" == "aarch64" ]]; then
+            # Examples can import scikit-learn before LightGBM; reserve libgomp's
+            # static TLS at startup on aarch64 (see FAQ entry 17).
+            test -f "${CONDA_PREFIX}/lib/libgomp.so.1"
+            export LD_PRELOAD="${CONDA_PREFIX}/lib/libgomp.so.1${LD_PRELOAD:+:${LD_PRELOAD}}"
+        fi
     fi
     for f in *.py **/*.py; do python "${f}" || exit 1; done  # run all examples
     cd "$BUILD_DIRECTORY/examples/python-guide/notebooks"
